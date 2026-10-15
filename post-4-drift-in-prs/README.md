@@ -15,11 +15,9 @@ The data is synthetic: 5,000 retail orders from Shape's retail domain (seed 42).
 
 GitHub only runs workflows from `.github/workflows/` at the repository root, so this post's workflow is
 [`.github/workflows/post-4-shape-drift.yml`](../.github/workflows/post-4-shape-drift.yml), not a file in this folder.
-It's the article's workflow with three changes for this repository:
-
-- a `paths` filter, so it only runs for pull requests that change this folder or the workflow;
-- `project: post-4-drift-in-prs` instead of `project: .`, because `shape.yml` is in this folder;
-- `defaults.run.working-directory: post-4-drift-in-prs`.
+It's the article's workflow with one change: `project: post-4-drift-in-prs` instead of `project: .`,
+because `shape.yml` is in this folder. It runs on every pull request, so the required check always
+reports, whatever folder a pull request changes.
 
 For the same reason, `shape git-setup` wrote `.gitattributes` and `.gitignore` at the repository root.
 
