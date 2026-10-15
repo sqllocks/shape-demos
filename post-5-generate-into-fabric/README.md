@@ -18,8 +18,7 @@ All the data is synthetic.
 
 The four helper scripts and the shell commands are copied byte for byte from the article's code blocks.
 The article shows the notebook piece by piece; each piece it shows appears unchanged in `notebook/finale_generate.notebook.py`,
-and `finale_generate_local.py` holds the same code cell. `commands.sh` adds one line the article implies but doesn't show:
-`python compare_status.py`.
+and `finale_generate_local.py` holds the same code cell.
 
 ## Run the local parts
 
