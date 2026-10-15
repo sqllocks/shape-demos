@@ -1,0 +1,23 @@
+name: Shape drift check
+on:
+  pull_request:
+    paths:
+      - "post-4-drift-in-prs/**"
+      - ".github/workflows/post-4-shape-drift.yml"
+permissions:
+  contents: read
+  pull-requests: write
+defaults:
+  run:
+    working-directory: post-4-drift-in-prs
+jobs:
+  shape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sqllocks/shape@v0.9.3
+        with:
+          shape-version: '0.9.3'
+          project: post-4-drift-in-prs
+          fail-on: drift
+          comment: 'true'
