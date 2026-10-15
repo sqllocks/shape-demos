@@ -1,0 +1,629 @@
+{
+  "properties": {
+    "activities": [
+      {
+        "name": "LoadToLakehouse",
+        "type": "Copy",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "source": {
+            "type": "ParquetSource",
+            "storeSettings": {
+              "type": "AzureBlobFSReadSettings",
+              "recursive": true,
+              "wildcardFolderPath": {
+                "value": "@concat('order/', if(equals(pipeline().parameters.mode, 'backfill'), 'ingest_date=*', concat('ingest_date=', pipeline().parameters.loadDate)))",
+                "type": "Expression"
+              },
+              "wildcardFileName": "*.parquet",
+              "enablePartitionDiscovery": false
+            },
+            "formatSettings": {
+              "type": "ParquetReadSettings"
+            },
+            "datasetSettings": {
+              "annotations": [],
+              "type": "Parquet",
+              "typeProperties": {
+                "location": {
+                  "type": "AzureBlobFSLocation",
+                  "fileSystem": "shape-landing"
+                },
+                "compressionCodec": "snappy"
+              },
+              "schema": [],
+              "externalReferences": {
+                "connection": "<adls-connection-id>"
+              }
+            }
+          },
+          "sink": {
+            "type": "LakehouseTableSink",
+            "tableActionOption": "OverwriteSchema",
+            "partitionOption": "None",
+            "applyVOrder": false,
+            "enableTimestampNtz": false,
+            "datasetSettings": {
+              "annotations": [],
+              "linkedService": {
+                "name": "shape_demo",
+                "properties": {
+                  "annotations": [],
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "<workspace-id>",
+                    "artifactId": "<lakehouse-id>",
+                    "rootFolder": "Tables"
+                  }
+                }
+              },
+              "type": "LakehouseTable",
+              "schema": [],
+              "typeProperties": {
+                "table": "finale_order_landing"
+              }
+            }
+          },
+          "enableStaging": false,
+          "parallelCopies": 1,
+          "translator": {
+            "type": "TabularTranslator",
+            "typeConversion": true,
+            "typeConversionSettings": {
+              "allowDataTruncation": true,
+              "treatBooleanAsNumber": false
+            }
+          }
+        }
+      },
+      {
+        "name": "ProfileLakehouse",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "LoadToLakehouse",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "LoadCustomersCsv",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "<notebook-id>",
+          "workspaceId": "<workspace-id>",
+          "parameters": {
+            "loadDate": {
+              "value": {
+                "value": "@pipeline().parameters.loadDate",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "layer": {
+              "value": "lakehouse",
+              "type": "string"
+            },
+            "mode": {
+              "value": {
+                "value": "@pipeline().parameters.mode",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "contractPath": {
+              "value": "/lakehouse/default/Files/contracts/finale_orders.json",
+              "type": "string"
+            },
+            "workspace": {
+              "value": "<workspace-name>",
+              "type": "string"
+            },
+            "lakehouse": {
+              "value": "shape_demo",
+              "type": "string"
+            },
+            "warehouse": {
+              "value": "shape_wh",
+              "type": "string"
+            },
+            "commitToGit": {
+              "value": true,
+              "type": "bool"
+            },
+            "gitRepo": {
+              "value": "<owner>/<profiles-repo>",
+              "type": "string"
+            },
+            "vaultUrl": {
+              "value": "https://<your-key-vault>.vault.azure.net/",
+              "type": "string"
+            },
+            "secretName": {
+              "value": "<your-secret-name>",
+              "type": "string"
+            },
+            "_inlineInstallationEnabled": {
+              "value": true,
+              "type": "bool"
+            }
+          }
+        }
+      },
+      {
+        "name": "GateLakehouse",
+        "type": "IfCondition",
+        "dependsOn": [
+          {
+            "activity": "ProfileLakehouse",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@json(activity('ProfileLakehouse').output.result.exitValue).passed",
+            "type": "Expression"
+          },
+          "ifFalseActivities": [
+            {
+              "name": "Quarantined",
+              "type": "Fail",
+              "dependsOn": [],
+              "typeProperties": {
+                "message": {
+                  "value": "@concat('Quarantined ', pipeline().parameters.loadDate, ' (not loaded to the warehouse): ', string(json(activity('ProfileLakehouse').output.result.exitValue).findings))",
+                  "type": "Expression"
+                },
+                "errorCode": "ShapeQuarantine"
+              }
+            }
+          ],
+          "ifTrueActivities": []
+        }
+      },
+      {
+        "name": "LoadWarehouse",
+        "type": "Script",
+        "dependsOn": [
+          {
+            "activity": "StageToWarehouse",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "linkedService": {
+          "name": "shape_wh",
+          "properties": {
+            "annotations": [],
+            "type": "DataWarehouse",
+            "typeProperties": {
+              "endpoint": "<warehouse-sql-endpoint>",
+              "artifactId": "<warehouse-id>",
+              "workspaceId": "<workspace-id>"
+            }
+          }
+        },
+        "typeProperties": {
+          "scripts": [
+            {
+              "type": "NonQuery",
+              "text": {
+                "value": "@concat('DELETE FROM dbo.finale_order WHERE ', if(equals(pipeline().parameters.mode, 'backfill'), '1=1', concat('load_date = ''', pipeline().parameters.loadDate, '''')), '; INSERT INTO dbo.finale_order SELECT order_id, customer_id, store_id, shipping_address_id, promotion_id, order_date, status, ', if(pipeline().parameters.plantLoadBug, 'CAST(CAST(order_total AS INT) AS DECIMAL(12,2))', 'CAST(order_total AS DECIMAL(12,2))'), ', load_date FROM dbo.finale_order_stage;')",
+                "type": "Expression"
+              }
+            }
+          ],
+          "scriptBlockExecutionTimeout": "02:00:00"
+        }
+      },
+      {
+        "name": "ProfileWarehouse",
+        "type": "TridentNotebook",
+        "dependsOn": [
+          {
+            "activity": "LoadWarehouse",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "notebookId": "<notebook-id>",
+          "workspaceId": "<workspace-id>",
+          "parameters": {
+            "loadDate": {
+              "value": {
+                "value": "@pipeline().parameters.loadDate",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "layer": {
+              "value": "warehouse",
+              "type": "string"
+            },
+            "mode": {
+              "value": {
+                "value": "@pipeline().parameters.mode",
+                "type": "Expression"
+              },
+              "type": "string"
+            },
+            "contractPath": {
+              "value": "/lakehouse/default/Files/contracts/finale_orders.json",
+              "type": "string"
+            },
+            "workspace": {
+              "value": "<workspace-name>",
+              "type": "string"
+            },
+            "lakehouse": {
+              "value": "shape_demo",
+              "type": "string"
+            },
+            "warehouse": {
+              "value": "shape_wh",
+              "type": "string"
+            },
+            "commitToGit": {
+              "value": true,
+              "type": "bool"
+            },
+            "gitRepo": {
+              "value": "<owner>/<profiles-repo>",
+              "type": "string"
+            },
+            "vaultUrl": {
+              "value": "https://<your-key-vault>.vault.azure.net/",
+              "type": "string"
+            },
+            "secretName": {
+              "value": "<your-secret-name>",
+              "type": "string"
+            },
+            "_inlineInstallationEnabled": {
+              "value": true,
+              "type": "bool"
+            }
+          }
+        }
+      },
+      {
+        "name": "GateWarehouse",
+        "type": "IfCondition",
+        "dependsOn": [
+          {
+            "activity": "ProfileWarehouse",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "typeProperties": {
+          "expression": {
+            "value": "@json(activity('ProfileWarehouse').output.result.exitValue).passed",
+            "type": "Expression"
+          },
+          "ifFalseActivities": [
+            {
+              "name": "WarehouseMismatch",
+              "type": "Fail",
+              "dependsOn": [],
+              "typeProperties": {
+                "message": {
+                  "value": "@concat('Warehouse load of ', pipeline().parameters.loadDate, ' does not match its profile: ', string(json(activity('ProfileWarehouse').output.result.exitValue).findings))",
+                  "type": "Expression"
+                },
+                "errorCode": "ShapeWarehouseMismatch"
+              }
+            }
+          ],
+          "ifTrueActivities": []
+        }
+      },
+      {
+        "name": "LoadCustomersCsv",
+        "type": "Copy",
+        "dependsOn": [],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "source": {
+            "type": "DelimitedTextSource",
+            "storeSettings": {
+              "type": "AzureBlobFSReadSettings",
+              "recursive": true,
+              "wildcardFolderPath": {
+                "value": "@concat('customer/', if(equals(pipeline().parameters.mode, 'backfill'), 'ingest_date=*', concat('ingest_date=', pipeline().parameters.loadDate)))",
+                "type": "Expression"
+              },
+              "wildcardFileName": "*.csv",
+              "enablePartitionDiscovery": false
+            },
+            "formatSettings": {
+              "type": "DelimitedTextReadSettings"
+            },
+            "datasetSettings": {
+              "annotations": [],
+              "type": "DelimitedText",
+              "typeProperties": {
+                "location": {
+                  "type": "AzureBlobFSLocation",
+                  "fileSystem": "shape-landing"
+                },
+                "columnDelimiter": ",",
+                "escapeChar": "\\",
+                "firstRowAsHeader": true,
+                "quoteChar": "\""
+              },
+              "schema": [],
+              "externalReferences": {
+                "connection": "<adls-connection-id>"
+              }
+            }
+          },
+          "sink": {
+            "type": "LakehouseTableSink",
+            "tableActionOption": "OverwriteSchema",
+            "partitionOption": "None",
+            "applyVOrder": false,
+            "enableTimestampNtz": false,
+            "datasetSettings": {
+              "annotations": [],
+              "linkedService": {
+                "name": "shape_demo",
+                "properties": {
+                  "annotations": [],
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "<workspace-id>",
+                    "artifactId": "<lakehouse-id>",
+                    "rootFolder": "Tables"
+                  }
+                }
+              },
+              "type": "LakehouseTable",
+              "schema": [],
+              "typeProperties": {
+                "table": "finale_customer_landing"
+              }
+            }
+          },
+          "enableStaging": false,
+          "parallelCopies": 1,
+          "translator": {
+            "type": "TabularTranslator",
+            "typeConversion": true,
+            "typeConversionSettings": {
+              "allowDataTruncation": true,
+              "treatBooleanAsNumber": false
+            }
+          }
+        }
+      },
+      {
+        "name": "LoadPromotionsExcel",
+        "type": "Copy",
+        "dependsOn": [
+          {
+            "activity": "GateLakehouse",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "source": {
+            "type": "ExcelSource",
+            "storeSettings": {
+              "type": "AzureBlobFSReadSettings",
+              "recursive": true,
+              "wildcardFolderPath": {
+                "value": "@concat('promotion/', if(equals(pipeline().parameters.mode, 'backfill'), 'ingest_date=*', concat('ingest_date=', pipeline().parameters.loadDate)))",
+                "type": "Expression"
+              },
+              "wildcardFileName": "*.xlsx",
+              "enablePartitionDiscovery": false
+            },
+            "datasetSettings": {
+              "annotations": [],
+              "type": "Excel",
+              "typeProperties": {
+                "sheetName": "promotion",
+                "location": {
+                  "type": "AzureBlobFSLocation",
+                  "fileSystem": "shape-landing"
+                },
+                "firstRowAsHeader": true
+              },
+              "schema": [],
+              "externalReferences": {
+                "connection": "<adls-connection-id>"
+              }
+            }
+          },
+          "sink": {
+            "type": "LakehouseTableSink",
+            "tableActionOption": "OverwriteSchema",
+            "partitionOption": "None",
+            "applyVOrder": false,
+            "enableTimestampNtz": false,
+            "datasetSettings": {
+              "annotations": [],
+              "linkedService": {
+                "name": "shape_demo",
+                "properties": {
+                  "annotations": [],
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "<workspace-id>",
+                    "artifactId": "<lakehouse-id>",
+                    "rootFolder": "Tables"
+                  }
+                }
+              },
+              "type": "LakehouseTable",
+              "schema": [],
+              "typeProperties": {
+                "table": "finale_promotion_landing"
+              }
+            }
+          },
+          "enableStaging": false,
+          "parallelCopies": 1,
+          "translator": {
+            "type": "TabularTranslator",
+            "typeConversion": true,
+            "typeConversionSettings": {
+              "allowDataTruncation": true,
+              "treatBooleanAsNumber": false
+            }
+          }
+        }
+      },
+      {
+        "name": "StageToWarehouse",
+        "type": "Copy",
+        "dependsOn": [
+          {
+            "activity": "GateLakehouse",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 0,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "typeProperties": {
+          "source": {
+            "type": "LakehouseTableSource",
+            "datasetSettings": {
+              "annotations": [],
+              "linkedService": {
+                "name": "shape_demo",
+                "properties": {
+                  "annotations": [],
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "<workspace-id>",
+                    "artifactId": "<lakehouse-id>",
+                    "rootFolder": "Tables"
+                  }
+                }
+              },
+              "type": "LakehouseTable",
+              "schema": [],
+              "typeProperties": {
+                "table": "finale_order_landing"
+              }
+            }
+          },
+          "sink": {
+            "type": "DataWarehouseSink",
+            "preCopyScript": "DELETE FROM dbo.finale_order_stage",
+            "allowCopyCommand": true,
+            "copyCommandSettings": {},
+            "writeBehavior": "Insert",
+            "disableMetricsCollection": false,
+            "datasetSettings": {
+              "annotations": [],
+              "linkedService": {
+                "name": "shape_wh",
+                "properties": {
+                  "annotations": [],
+                  "type": "DataWarehouse",
+                  "typeProperties": {
+                    "endpoint": "<warehouse-sql-endpoint>",
+                    "artifactId": "<warehouse-id>",
+                    "workspaceId": "<workspace-id>"
+                  }
+                }
+              },
+              "type": "DataWarehouseTable",
+              "schema": [],
+              "typeProperties": {
+                "schema": "dbo",
+                "table": "finale_order_stage"
+              }
+            }
+          },
+          "enableStaging": true,
+          "translator": {
+            "type": "TabularTranslator",
+            "typeConversion": true,
+            "typeConversionSettings": {
+              "allowDataTruncation": true,
+              "treatBooleanAsNumber": false
+            }
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "loadDate": {
+        "type": "string",
+        "defaultValue": "2026-10-06"
+      },
+      "mode": {
+        "type": "string",
+        "defaultValue": "backfill"
+      },
+      "plantLoadBug": {
+        "type": "bool",
+        "defaultValue": false
+      }
+    }
+  }
+}
