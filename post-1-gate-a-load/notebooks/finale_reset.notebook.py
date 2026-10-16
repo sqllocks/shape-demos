@@ -25,7 +25,7 @@
 
 # Parameters cell
 keepThrough = "2026-10-06"   # keep every day up to and including this date; remove everything after it
-dryRun = False                # True: only list what would be removed. Set False to remove it.
+dryRun = True                 # True: only list what would be removed. Set False to remove it.
 
 # METADATA ********************
 
@@ -87,7 +87,7 @@ if not LOCAL:
     conn = notebookutils.data.connect_to_artifact("shape_wh")
     later = conn.query(f"SELECT COUNT(*) AS n FROM dbo.finale_order WHERE load_date > '{keepThrough}'").iloc[0]["n"]
     print(f"warehouse: {later} row(s) after {keepThrough}" + ("" if later == 0 else
-          "  <- these stay; rerun those days through the pipeline or tell me and I'll give you the delete"))
+          "  <- these stay; rerun those days through the pipeline, or delete them from dbo.finale_order by hand"))
 print("DRY RUN: nothing was changed. Set dryRun = False and run again to apply." if dryRun else "Reset done.")
 
 # METADATA ********************

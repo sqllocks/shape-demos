@@ -82,7 +82,7 @@ secretName = "<your-secret-name>"
 
 # CELL ********************
 
-# Finale profiling core (O-07 demo content). Uses only public Shape APIs.
+# Finale profiling core. Uses only public Shape APIs.
 import datetime as dt, json, warnings
 import pyarrow as pa, pyarrow.compute as pc
 import shape
@@ -160,7 +160,7 @@ else:
     import notebookutils
     OPTS = {"bearer_token": notebookutils.credentials.getToken("storage"), "use_fabric_endpoint": "true"}
     ONELAKE = f"abfss://{workspace}@onelake.dfs.fabric.microsoft.com"
-    LH_TABLES = f"{ONELAKE}/{lakehouse}.Lakehouse/Tables"   # F-1: write Delta through OneLake, not the mount
+    LH_TABLES = f"{ONELAKE}/{lakehouse}.Lakehouse/Tables"   # write Delta through OneLake, not the mount
     WH_TABLES = f"{ONELAKE}/{warehouse}.Warehouse/Tables/dbo"
     FILES = "/lakehouse/default/Files"
 
